@@ -3,6 +3,10 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/templates/vhost/config" />
+      <excludeFolder url="file://$MODULE_DIR$/templates/vhost/ssl_saved" />
+      <excludeFolder url="file://$MODULE_DIR$/templates/website/default" />
+      <excludeFolder url="file://$MODULE_DIR$/templates/website/laravel_12/vendor" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.9 (NhanDienThongTinTranh)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
