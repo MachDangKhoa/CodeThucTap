@@ -30,9 +30,3 @@ def crop_painting(image_path, output_path):
     # Lưu ảnh kết quả
     cv2.imwrite(output_path, cropped_image)
     return output_path
-
-# Ví dụ sử dụng
-# input_image = "D:/LuanVanTotNghiep/NhanDienThongTinTranh/temp.jpg"
-# output_image = "D:/LuanVanTotNghiep/NhanDienThongTinTranh/demo.jpg"
-# crop_painting(input_image, output_image)
-# print("Ảnh đã được cắt và lưu tại:", output_image)

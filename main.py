@@ -9,8 +9,6 @@ from flask import Flask, request, jsonify, send_from_directory
 from selenium_search import search_google_and_extract_info
 from feature_matcher import find_best_match_cosine
 from selenium_search import process_image_for_search
-from flask_cors import CORS
-
 
 # ========== CONFIG ==========
 DATASET_PATH = "D:/LuanVanTotNghiep/NhanDienThongTinTranh/wikiart"
@@ -85,7 +83,6 @@ def get_artist_from_class(file_name):
 
 # ========== Flask API ==========
 app = Flask(__name__)
-CORS(app)
 
 @app.route("/predict", methods=["GET", "POST"])
 def predict():
@@ -120,9 +117,9 @@ def predict():
             author = get_artist_from_class(best_match["file_name"])
 
             info = {
-                "painting_title": painting_title,
                 "artist": author,
                 "style": best_match["style"],
+                "painting_title": painting_title,
                 "photographer": photographer,
                 "similarity": float(best_match["similarity"]),
                 "matched_file": best_match["file_name"],

@@ -1,6 +1,8 @@
+import base64
 import os
 import time
 import uuid
+import json
 from skimage.transform import resize
 import requests
 from bs4 import BeautifulSoup
@@ -14,14 +16,21 @@ from skimage.metrics import structural_similarity as ssim
 from selenium.webdriver.common.action_chains import ActionChains
 from extract_dino_features import extract_dino_features
 from detect_image import crop_painting
-import shutil
+import google.generativeai as genai
+import re
+from underthesea import ner
 
-SIM_THRESHOLD = 0.60
+# Cấu hình API Google Gemini
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyA-Lymc-kEm_p00YMcQEbAlvgO79ZO-fgQ")
+genai.configure(api_key=GOOGLE_API_KEY)
+
+SIM_THRESHOLD = 0.55
 output_image = "D:/LuanVanTotNghiep/NhanDienThongTinTranh/demo.jpg"
 EXCLUDED_DOMAINS = [
     "google.com", "accounts.google.com", "policies.google.com", "support.google.com",
     "myactivity.google.com", "www.google.com.vn", "www.google.com"
 ]
+
 
 def is_valid_article_url(img_url):
     if not img_url:
@@ -35,20 +44,6 @@ def is_valid_article_url(img_url):
     return True
 
 
-def extract_info_from_article(page_url):
-    try:
-        response = requests.get(page_url, timeout=10)
-        if response.status_code != 200:
-            return {"description": "Không rõ", "source_page": page_url}
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        paragraphs = soup.find_all("p")
-        description = " ".join([p.text.strip() for p in paragraphs]) if paragraphs else "Không rõ"
-
-        return {"description": description, "source_page": page_url}
-    except Exception as e:
-        return {"description": f"Lỗi phân tích bài báo: {e}", "source_page": page_url}
-
 def save_temp_image(image):
     """Lưu mảng ảnh NumPy vào thư mục chỉ định và trả về đường dẫn."""
     save_dir = "D:/LuanVanTotNghiep/NhanDienThongTinTranh/"
@@ -59,6 +54,7 @@ def save_temp_image(image):
 
     cv2.imwrite(temp_file_path, image)  # Lưu ảnh vào file
     return temp_file_path
+
 
 def preprocess_image(image, mode='gray'):
     """
@@ -119,6 +115,7 @@ def histogram_matching(image1, image2):
     total_similarity = alpha * similarity_hsv + beta * similarity_gray
 
     return total_similarity
+
 
 def ssim_compare(image1, image2):
     # Resize image2 theo kích thước của image1
@@ -206,6 +203,7 @@ def process_image_for_search(image_path):
 
         # Nếu không có ảnh nào tốt, thực hiện bước SIFT trên ảnh Grayscale
         sift_candidates = []
+
         if best_image is None:
             for img in images:
                 img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  # Chuyển về grayscale nếu cần
@@ -247,6 +245,176 @@ def process_image_for_search(image_path):
         else:
             print(f"File {temp_image_path} không tồn tại.")
 
+
+def extract_info_from_article(page_url):
+    try:
+        response = requests.get(page_url, timeout=10)
+        if response.status_code != 200:
+            return {"description": "Không rõ", "source_page": page_url}
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        paragraphs = soup.find_all("p")
+        description = " ".join([p.text.strip() for p in paragraphs]) if paragraphs else "Không rõ"
+
+        return {"description": description, "source_page": page_url}
+    except Exception as e:
+        return {"description": f"Lỗi phân tích bài báo: {e}", "source_page": page_url}
+
+
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+
+
+def extract_info_from_gemini(image_path, articles):
+    try:
+        # Ghép nối tất cả các mô tả từ bài viết
+        description_text = " ".join([article["description"] for article in articles])
+        image_data = encode_image(image_path)  # Hàm này cần phải định nghĩa để mã hóa ảnh
+
+        # Tạo prompt cho Gemini
+        prompt = (
+            f"Phân tích bức tranh từ hình ảnh và thông tin bài viết dưới đây: {description_text}. "
+            "Trả lời chi tiết và cụ thể về các thông tin sau: "
+            "- Tên bức tranh. "
+            "- Tên nghệ sĩ (nếu có). "
+            "- Phong cách và các đặc điểm nghệ thuật nổi bật của tác phẩm. "
+            "- Thể loại của bức tranh (ví dụ: tranh ngựa, phong cảnh, v.v.). "
+            "- Năm sáng tác (nếu có thông tin). "
+            "- Mô tả chi tiết về bức tranh, các đặc điểm nổi bật như màu sắc, hình dáng, và bố cục. "
+            "- Các yếu tố đặc biệt hoặc thông tin bổ sung (ví dụ: ký hiệu, chữ ký, v.v.). "
+            "Trả kết quả theo định dạng JSON nếu có thể. Nếu không, trả lời dưới dạng văn bản mô tả chi tiết."
+        )
+
+        # Khởi tạo mô hình Gemini
+        model = genai.GenerativeModel("gemini-1.5-pro-latest")
+        response = model.generate_content(
+            contents=[{"mime_type": "image/jpeg", "data": image_data}, prompt]
+        )
+
+        result = response.text if hasattr(response, 'text') else response.content if hasattr(response,
+                                                                                             'content') else ""
+
+        # In kết quả trả về từ Gemini để debug
+        print("Result from Gemini:", result)
+
+        # Kiểm tra xem response có hợp lệ không
+        if not result:
+            return {"error": "Không có kết quả trả về từ Gemini."}
+
+        # Định nghĩa các từ khóa chuẩn mà bạn muốn trích xuất
+        predefined_keywords = {
+            "title": ["title", "painting_title", "name_of_painting", "tên_bức_tranh"],  # Thêm từ khóa cho tên bức tranh
+            "artist": ["artist", "name", "author", "tên_nghệ_sĩ"],
+            "style": ["style", "artistic_style", "genre_style", "phong_cách"],
+            "genre": ["genre", "type", "category", "thể_loại"],
+            "year": ["year", "year_of_creation", "creation_year", "năm_sáng_tác"],
+            "description": ["description", "details", "painting_description", "mô_tả"],
+            "artistic_features": ["artistic_features", "special_features", "painting_features", "characteristics",
+                                  "đặc_điểm_nghệ_thuật"],
+            "additional_information": ["additional_information", "extra_info", "additional_details",
+                                       "additional_info", "yếu_tố_đặc_biệt"]
+        }
+
+        # Cố gắng phân tích kết quả dưới dạng JSON
+        try:
+            # Kiểm tra nếu kết quả là một chuỗi JSON hợp lệ
+            result_json = json.loads(result)
+
+            # Khớp các từ khóa với các khóa trong JSON
+            extracted_info = {}
+            for key, possible_keys in predefined_keywords.items():
+                for possible_key in possible_keys:
+                    if possible_key in result_json:
+                        extracted_info[key] = result_json[possible_key]
+                        break
+                # Nếu không tìm thấy bất kỳ khóa nào, gán giá trị mặc định
+                if key not in extracted_info:
+                    extracted_info[key] = "Không có thông tin"
+
+            return extracted_info  # Trả về kết quả JSON nếu phân tích thành công
+        except json.JSONDecodeError:
+            # Nếu không phải JSON, sử dụng regex để trích xuất thông tin cần thiết
+            extracted_info = {
+                "title": "Không có thông tin",  # Thêm giá trị mặc định cho tên bức tranh
+                "artist": "Không có thông tin",
+                "style": "Không có thông tin",
+                "genre": "Không có thông tin",
+                "year": "Không có thông tin",
+                "description": "Không có thông tin",
+                "artistic_features": "Không có thông tin",
+                "additional_info": "Không có thông tin"
+            }
+
+            # Sử dụng regex để trích xuất các thông tin khác
+            extracted_info["title"] = re.search(r"\"title\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"painting_title\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"name_of_painting\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"tên_bức_tranh\"\s*:\s*\"([^\"]+)\"", result)
+            extracted_info["artist"] = re.search(r"\"artist\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"name\"\s*:\s*\"([^\"]+)\"", result) or re.search(r"\"author\"\s*:\s*\"([^\"]+)\"",
+                                                                     result) or re.search(
+                r"\"tên_nghệ_sĩ\"\s*:\s*\"([^\"]+)\"", result)
+            extracted_info["style"] = re.search(r"\"style\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"artistic_style\"\s*:\s*\"([^\"]+)\"", result) or re.search(r"\"phong_cách\"\s*:\s*\"([^\"]+)\"",
+                                                                               result)
+            extracted_info["genre"] = re.search(r"\"genre\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"type\"\s*:\s*\"([^\"]+)\"", result) or re.search(r"\"thể_loại\"\s*:\s*\"([^\"]+)\"", result)
+            extracted_info["year"] = re.search(r"\"year_of_creation\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"year\"\s*:\s*\"([^\"]+)\"", result) or re.search(r"\"creation_year\"\s*:\s*\"([^\"]+)\"",
+                                                                     result) or re.search(
+                r"\"năm_sáng_tác\"\s*:\s*\"([^\"]+)\"", result)
+            extracted_info["description"] = re.search(r"\"description\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"mô_tả\"\s*:\s*\"([^\"]+)\"", result) or re.search(r"\"mô_tả_chi_tiết\"\s*:\s*\"([^\"]+)\"", result)
+            extracted_info["artistic_features"] = re.search(r"\"artistic_features\"\s*:\s*\[([^\]]+)\]",
+                                                            result) or re.search(
+                r"\"characteristics\"\s*:\s*\[([^\]]+)\]", result) or re.search(
+                r"\"đặc_điểm_nghệ_thuật\"\s*:\s*\[([^\]]+)\]", result) or re.search(
+                r"\"đặc_điểm_nghệ_thuật_nổi_bật\"\s*:\s*\[([^\]]+)\]", result) or re.search(
+                r"\"artistic_features\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"characteristics\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"đặc_điểm_nghệ_thuật\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"đặc_điểm_nghệ_thuật_nổi_bật\"\s*:\s*\"([^\"]+)\"", result)
+            extracted_info["additional_info"] = re.search(r"\"additional_information\"\s*:\s*\[([^\]]+)\]",
+                                                          result) or re.search(
+                r"\"additional_info\"\s*:\s*\[([^\]]+)\]", result) or re.search(
+                r"\"yếu_tố_đặc_biệt\"\s*:\s*\[([^\]]+)\]", result) or re.search(
+                r"\"yếu_tố_đặc_biệt_hoặc_thông_tin_bổ_sung\"\s*:\s*\[([^\]]+)\]", result) or re.search(
+                r"\"additional_information\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"additional_info\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"yếu_tố_đặc_biệt\"\s*:\s*\"([^\"]+)\"", result) or re.search(
+                r"\"yếu_tố_đặc_biệt_hoặc_thông_tin_bổ_sung\"\s*:\s*\"([^\"]+)\"", result)
+
+            # Chuyển đổi kết quả regex thành giá trị thực tế
+            extracted_info = {
+                k: v.group(1).strip() if v else "Không có thông tin" for k, v in extracted_info.items()
+            }
+
+            # Trả về kết quả dưới dạng văn bản mô tả chi tiết
+            detailed_description = (
+                f"Thông tin về bức tranh:\n"
+                f"1. Tên bức tranh: {extracted_info['title']}\n"  # Thêm tên bức tranh
+                f"2. Tên nghệ sĩ: {extracted_info['artist']}\n"
+                f"3. Phong cách và đặc điểm nghệ thuật: {extracted_info['style']}\n"
+                f"4. Thể loại: {extracted_info['genre']}\n"
+                f"5. Năm sáng tác: {extracted_info['year']}\n"
+                f"6. Mô tả: {extracted_info['description']}\n"
+                f"7. Các đặc điểm nghệ thuật nổi bật: {extracted_info['artistic_features']}\n"
+                f"8. Thông tin bổ sung: {extracted_info['additional_info']}\n"
+            )
+
+            # Kiểm tra kết quả cuối cùng
+            if all(value == "Không có thông tin" for value in extracted_info.values()):
+                # Nếu tất cả các trường không có thông tin, trả về văn bản mô tả chi tiết
+                return detailed_description
+            else:
+                # Nếu có bất kỳ thông tin nào hợp lệ, trả về thông tin đã trích xuất
+                return extracted_info
+
+    except Exception as e:
+        return {"error": f"Lỗi khi trích xuất thông tin từ Gemini: {str(e)}"}
+
+
 def search_google_and_extract_info(image_path):
     print("🔍 Đang tìm kiếm bài báo từ Google Image...")
 
@@ -270,7 +438,7 @@ def search_google_and_extract_info(image_path):
 
     try:
         driver.get("https://www.google.com/?hl=vi")
-        driver.maximize_window()
+        driver.minimize_window()
         time.sleep(2)
 
         # Click vào nút tìm kiếm bằng hình ảnh
@@ -278,7 +446,7 @@ def search_google_and_extract_info(image_path):
             EC.element_to_be_clickable((By.XPATH, '//div[@aria-label="Tìm kiếm bằng hình ảnh"]'))
         )
         camera_button.click()
-        time.sleep(2)
+        time.sleep(1)
 
         # Upload ảnh để tìm kiếm
         file_input = WebDriverWait(driver, 10).until(
@@ -293,7 +461,7 @@ def search_google_and_extract_info(image_path):
             about_tab = WebDriverWait(driver, 5).until(
                 EC.element_to_be_clickable((By.XPATH, '//div[contains(text(), "Kết quả khớp chính xác")]')))
             about_tab.click()
-            time.sleep(5)
+            time.sleep(1)
 
             article_links = driver.find_elements(By.XPATH, '//div[@id="search"]//a[contains(@href, "http")]')
             matched_articles = []
@@ -305,20 +473,26 @@ def search_google_and_extract_info(image_path):
 
                 article_info = extract_info_from_article(url)
                 matched_articles.append(article_info)
-                if len(matched_articles) >= 10:
+                if len(matched_articles) >= 5:
                     break
 
+            gemini_info = extract_info_from_gemini(image_path, matched_articles) if matched_articles else {}
+
             if matched_articles:
+                result = {
+                    "source": "Google Image",
+                    "gemini_info": gemini_info
+                }
                 driver.quit()
-                return {"source": "Google Image", "matched_articles": matched_articles}
-        except:
-            print("❌ Không tìm thấy bài báo, chuyển qua tab hình ảnh trùng khớp...")
+                return result
+        except Exception as e:
+            print(f"❌ Lỗi: {e}")
 
         try:
             img_tab = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, '//div[contains(text(), "Hình ảnh trùng khớp")]')))
             img_tab.click()
-            time.sleep(5)
+            time.sleep(2)
 
             images = driver.find_elements(By.XPATH, '//div[contains(@class, "gdOPf")]//img')
             if not images:
