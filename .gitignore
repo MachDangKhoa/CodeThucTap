@@ -1,4 +1,25 @@
 data
 wikiart
 templates
-features
+features/
+*.pkl
+# Bỏ qua thư mục .venv (virtual environment)
+.venv/
+
+# Bỏ qua tệp cv2.pyd
+.venv/Lib/site-packages/cv2/cv2.pyd
+
+# Bỏ qua tệp dnnl.lib và torch_cpu.dll
+.venv/Lib/site-packages/torch/lib/dnnl.lib
+.venv/Lib/site-packages/torch/lib/torch_cpu.dll
+
+# Bỏ qua tệp features.pkl
+features/features.pkl
+
+# Bỏ qua các tệp MySQL
+templates/mysql_data/ibdata1
+templates/mysql_data/ib_logfile0
+templates/mysql_data/ib_logfile1
+
+# Bỏ qua tệp Baroque.zip trong thư mục wikiart
+wikiart/Baroque.zip
