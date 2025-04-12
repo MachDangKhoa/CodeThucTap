@@ -44,7 +44,15 @@ def generate_description(file_name, style):
     try:
         model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
-        return response.text if response and response.text else "Không có mô tả."
+        description = response.text if response and response.text else "Không có mô tả."
+
+        # Cắt chuỗi mô tả bắt đầu từ từ khóa "Mô tả"
+        start_index = description.find("Mô tả:")
+        if start_index != -1:
+            return description[start_index:]
+        return description  # Nếu không tìm thấy "Mô tả", trả về toàn bộ mô tả
+
     except Exception as e:
         print(f"Lỗi khi gọi API Gemini: {e}")
         return "Không thể tạo mô tả."
+
