@@ -5,10 +5,12 @@ import torch
 import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from selenium_search import search_google_and_extract_info
 from feature_matcher import find_best_match_cosine
 from selenium_search import process_image_for_search
+from flask_cors import CORS
+
 
 # ========== CONFIG ==========
 DATASET_PATH = "D:/LuanVanTotNghiep/NhanDienThongTinTranh/wikiart"
@@ -83,31 +85,33 @@ def get_artist_from_class(file_name):
 
 # ========== Flask API ==========
 app = Flask(__name__)
+CORS(app)
 
-@app.route("/predict", methods=["GET","POST"])
+@app.route("/predict", methods=["GET", "POST"])
 def predict():
     if request.method == "GET":
         return '''
-                <h2>Upload ảnh để nhận diện tranh</h2>
-                <form method="POST" enctype="multipart/form-data">
-                    <input type="file" name="image" accept="image/*" required>
-                    <input type="submit" value="Upload">
-                </form>
-            '''
-        # Ghi nội dung form vào file debug_page.html
-        with open("D:/LuanVanTotNghiep/NhanDienThongTinTranh/templates/debug_page.html", "w", encoding="utf-8") as f:
-            f.write(form_html)
-        return form_html
+            <h2>Upload ảnh để nhận diện tranh</h2>
+            <form method="POST" enctype="multipart/form-data">
+                <input type="file" name="image" accept="image/*" required>
+                <input type="submit" value="Upload">
+            </form>
+        '''
 
     if "image" not in request.files:
         return jsonify({"error": "Không có ảnh được cung cấp"}), 400
 
     image_file = request.files["image"]
-    image = Image.open(image_file).convert("RGB")
-    temp_image_path = "temp.jpg"
-    image.save(temp_image_path)
 
+    if image_file.filename == "":
+        return jsonify({"error": "Tên file không hợp lệ"}), 400
+    temp_image_path = "temp.jpg"
     try:
+        # Lưu ảnh tạm thời
+        image = Image.open(image_file).convert("RGB")
+        image.save(temp_image_path)
+
+        # 1️⃣ Tìm trong dataset trước
         input_vector = extract_feature_vector(temp_image_path)
         best_match = find_best_match_cosine(input_vector)
 
@@ -116,35 +120,32 @@ def predict():
             author = get_artist_from_class(best_match["file_name"])
 
             info = {
-                "painting_title": str(painting_title),
-                "photographer": str(photographer),
-                "style": str(best_match["style"]),
-                "artist": str(author),
+                "painting_title": painting_title,
+                "artist": author,
+                "style": best_match["style"],
+                "photographer": photographer,
                 "similarity": float(best_match["similarity"]),
-                "matched_file": str(best_match["file_name"])
+                "matched_file": best_match["file_name"],
+                "description": best_match.get("description", "Không có mô tả.")
             }
 
             return jsonify({"source": "Dataset Cosine", "info": info})
 
-        else:
-            # Nếu không tìm thấy trong Dataset → fallback sang Google Search
-            google_info = search_google_and_extract_info(temp_image_path)
+        # 2️⃣ Nếu không có trong dataset → fallback sang Google Search
+        google_info = search_google_and_extract_info(temp_image_path)
 
-            if "error" in google_info:
-                return jsonify({"error": "Không tìm thấy tranh trong dataset hoặc từ Google Search"})
+        if google_info and "error" not in google_info:
+            return jsonify(google_info)  # 🔥 Trả về kết quả Google Search nếu có ảnh hợp lệ
 
-            def convert_to_serializable(obj):
-                if isinstance(obj, dict):
-                    return {k: convert_to_serializable(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [convert_to_serializable(v) for v in obj]
-                elif isinstance(obj, (np.float32, np.float64)):
-                    return float(obj)
-                elif isinstance(obj, (np.int32, np.int64)):
-                    return int(obj)
-                else:
-                    return obj
-            return jsonify(convert_to_serializable(google_info))
+        # 3️⃣ Nếu Google Search không có kết quả → Xử lý ảnh đã tải xuống
+        process_result = process_image_for_search(temp_image_path)
+
+        if process_result:
+            return jsonify(process_result)  # 🔥 Trả về kết quả sau khi xử lý ảnh tải về
+
+        # ❌ Nếu không tìm thấy gì cả → Trả lỗi cuối cùng
+        return jsonify({"error": "Không tìm thấy tranh trong dataset, Google Search hoặc xử lý ảnh tải xuống."})
+
     finally:
         if os.path.exists(temp_image_path):
             os.remove(temp_image_path)
