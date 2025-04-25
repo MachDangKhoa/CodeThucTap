@@ -6,9 +6,7 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
 from flask import Flask, request, jsonify, send_from_directory
-from selenium_search import search_google_and_extract_info
 from feature_matcher import find_best_match_cosine
-from selenium_search import process_image_for_search
 from flask_cors import CORS
 
 
@@ -130,18 +128,6 @@ def predict():
             }
 
             return jsonify({"source": "Dataset Cosine", "info": info})
-
-        # # 2️⃣ Nếu không có trong dataset → fallback sang Google Search
-        # google_info = search_google_and_extract_info(temp_image_path)
-        #
-        # if google_info and "error" not in google_info:
-        #     return jsonify(google_info)  # 🔥 Trả về kết quả Google Search nếu có ảnh hợp lệ
-        #
-        # # 3️⃣ Nếu Google Search không có kết quả → Xử lý ảnh đã tải xuống
-        # process_result = process_image_for_search(temp_image_path)
-        #
-        # if process_result:
-        #     return jsonify(process_result)  # 🔥 Trả về kết quả sau khi xử lý ảnh tải về
 
         # ❌ Nếu không tìm thấy gì cả → Trả lỗi cuối cùng
         return jsonify({"error": "Không tìm thấy tranh trong dataset, Google Search hoặc xử lý ảnh tải xuống."})
